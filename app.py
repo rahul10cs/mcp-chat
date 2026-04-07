@@ -102,21 +102,26 @@ async def chat(req: ChatRequest):
 
                     # ── Step 3: Tool call loop ────────────────────────────────
                     while response.stop_reason == "tool_use":
-                        tool_block = next(
-                            b for b in response.content if b.type == "tool_use"
-                        )
+                        # Collect ALL tool_use blocks from this response
+                        tool_blocks = [b for b in response.content if b.type == "tool_use"]
 
-                        # Execute the tool on the MCP Server
-                        tool_result = await session.call_tool(
-                            tool_block.name,
-                            dict(tool_block.input),
-                        )
-
-                        result_text = (
-                            tool_result.content[0].text
-                            if tool_result.content
-                            else "No data returned."
-                        )
+                        # Execute every tool and gather results
+                        tool_results = []
+                        for tool_block in tool_blocks:
+                            tool_result = await session.call_tool(
+                                tool_block.name,
+                                dict(tool_block.input),
+                            )
+                            result_text = (
+                                tool_result.content[0].text
+                                if tool_result.content
+                                else "No data returned."
+                            )
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_block.id,
+                                "content": result_text,
+                            })
 
                         # Serialize assistant response blocks for the API
                         assistant_content = [
@@ -124,15 +129,9 @@ async def chat(req: ChatRequest):
                             for b in response.content
                         ]
 
+                        # All tool_results must go in a single user message
                         messages.append({"role": "assistant", "content": assistant_content})
-                        messages.append({
-                            "role": "user",
-                            "content": [{
-                                "type": "tool_result",
-                                "tool_use_id": tool_block.id,
-                                "content": result_text,
-                            }],
-                        })
+                        messages.append({"role": "user", "content": tool_results})
 
                         response = claude.messages.create(
                             model="claude-sonnet-4-6",

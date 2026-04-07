@@ -118,35 +118,42 @@ FastAPI validates the incoming JSON against the `ChatRequest` model. If `message
 
 ### Step 3 — Open SSE connection to the MCP Server
 
+> This is where **mcp-chat calls mcp-salesforce**. Every request to `/chat` opens a fresh connection to the MCP server. See [mcp-salesforce → Step 1: SSE Connection](https://github.com/rahul10cs/mcp-salesforce#step-1--mcp-client-opens-an-sse-connection) for what happens on the server side.
+
 ```python
-async with sse_client(url=MCP_SERVER_URL) as (read, write):
+# app.py — this line opens the HTTP connection to mcp-salesforce
+async with sse_client(url=MCP_SERVER_URL) as (read, write):   # ← calls GET http://localhost:8000/sse
     async with ClientSession(read, write) as session:
-        await session.initialize()
+        await session.initialize()   # ← MCP handshake (jsonrpc initialize)
 ```
 
-`MCP_SERVER_URL` points to `http://localhost:8000/sse` (or the deployed Render URL).
+`MCP_SERVER_URL` is loaded from `.env` — `http://localhost:8000/sse` locally, or the Render URL in production.
 
-- `sse_client` opens an HTTP connection and keeps it alive via **Server-Sent Events**
-- `ClientSession` wraps the connection with the MCP protocol (handshake, message framing)
-- `session.initialize()` performs the MCP handshake — server and client exchange capabilities
+- `sse_client` makes a `GET /sse` request to the MCP server and keeps the connection open
+- `ClientSession` wraps the streams with MCP protocol framing (JSON-RPC over SSE)
+- `session.initialize()` sends an `initialize` message — server and client exchange protocol versions and capabilities
 
 ---
 
 ### Step 4 — Fetch available tools from the MCP Server
 
+> This sends a `tools/list` JSON-RPC call to mcp-salesforce. See [mcp-salesforce → Step 3: List Tools](https://github.com/rahul10cs/mcp-salesforce#step-3--client-lists-available-tools) for the server-side handler.
+
 ```python
-tools_response = await session.list_tools()
+# app.py — sends tools/list to mcp-salesforce, receives 6 tool definitions
+tools_response = await session.list_tools()   # ← POST /messages/?session_id=<id>  { "method": "tools/list" }
+
 tools = [
     {
-        "name": t.name,
+        "name": t.name,              # e.g. "get_accounts"
         "description": t.description or "",
-        "input_schema": to_dict(t.inputSchema),
+        "input_schema": to_dict(t.inputSchema),   # JSON schema for Claude
     }
     for t in tools_response.tools
 ]
 ```
 
-The MCP server returns the full list of tools it exposes (get_accounts, get_contacts, etc.) with their names, descriptions, and input schemas. These are converted into the format Claude's API expects for tool use.
+The MCP server responds with all 6 tool definitions. The `to_dict()` call converts Pydantic models to plain dicts (explained in Step 7). These are then passed directly to the Claude API so Claude knows what it can call.
 
 ---
 
@@ -173,36 +180,67 @@ Claude then decides: can I answer this from my own knowledge, or do I need to ca
 
 ### Step 6 — Tool call loop (if Claude needs Salesforce data)
 
-If Claude needs to query Salesforce, it responds with `stop_reason = "tool_use"`:
+If Claude needs to query Salesforce, it responds with `stop_reason = "tool_use"`. Claude's response at this point looks like this:
+
+```json
+{
+  "stop_reason": "tool_use",
+  "content": [
+    {
+      "type": "text",
+      "text": "Let me look up your accounts."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01ABC...",
+      "name": "get_accounts",
+      "input": { "limit": 10 }
+    }
+  ]
+}
+```
+
+Claude may return **multiple `tool_use` blocks in a single response** (e.g. when you ask "show me accounts and open cases" — it calls both tools at once). The code handles all of them:
 
 ```python
 while response.stop_reason == "tool_use":
-    # Extract which tool Claude wants to call
-    tool_block = next(b for b in response.content if b.type == "tool_use")
+    # Collect ALL tool_use blocks — Claude may call more than one at once
+    tool_blocks = [b for b in response.content if b.type == "tool_use"]
 
-    # Execute the tool on the MCP Server
-    tool_result = await session.call_tool(
-        tool_block.name,       # e.g. "get_accounts"
-        dict(tool_block.input) # e.g. { "limit": 10 }
-    )
-
-    result_text = tool_result.content[0].text   # plain text result from Salesforce
+    # Execute every tool and gather all results
+    # ↓ This line calls mcp-salesforce — see https://github.com/rahul10cs/mcp-salesforce#step-5--mcp-client-sends-the-tool-call-to-this-server
+    tool_results = []
+    for tool_block in tool_blocks:
+        tool_result = await session.call_tool(  # ← POST /messages/?session_id=<id>  { "method": "tools/call", "params": { "name": "get_accounts", ... } }
+            tool_block.name,        # e.g. "get_accounts"
+            dict(tool_block.input), # e.g. { "limit": 10 }
+        )
+        result_text = (
+            tool_result.content[0].text
+            if tool_result.content
+            else "No data returned."
+        )
+        tool_results.append({
+            "type": "tool_result",
+            "tool_use_id": tool_block.id,  # must match the tool_use id Claude sent
+            "content": result_text,
+        })
 ```
 
-Then the conversation is extended with Claude's tool call and the result:
+**Why all results must go in one message:** The Anthropic API requires that every `tool_use` block from the assistant's turn has a matching `tool_result` in the very next user message. Sending them one at a time would leave unmatched IDs and cause a 400 error.
 
 ```python
-    messages.append({"role": "assistant", "content": assistant_content})
-    messages.append({
-        "role": "user",
-        "content": [{
-            "type": "tool_result",
-            "tool_use_id": tool_block.id,
-            "content": result_text,    # Salesforce data as text
-        }],
-    })
+    # Serialize Claude's response (assistant turn) for the conversation history
+    assistant_content = [
+        to_dict(b) if not isinstance(b, dict) else b
+        for b in response.content
+    ]
 
-    # Call Claude again with the tool result
+    # Append assistant turn + all tool results in one user turn
+    messages.append({"role": "assistant", "content": assistant_content})
+    messages.append({"role": "user", "content": tool_results})
+
+    # Call Claude again — now it has the Salesforce data and can answer
     response = claude.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
@@ -211,11 +249,37 @@ Then the conversation is extended with Claude's tool call and the result:
     )
 ```
 
-This loop continues until `stop_reason` is no longer `"tool_use"` — meaning Claude has all the data it needs and is ready to write a final answer. Claude may call multiple tools in sequence if the query requires it.
+#### How the message history grows across turns
+
+Each iteration appends to `messages`. By the second Claude call, the full conversation looks like this:
+
+```
+messages = [
+  { "role": "user",      "content": "show me my accounts" },
+  { "role": "assistant", "content": [ <text block>, <tool_use block> ] },
+  { "role": "user",      "content": [ <tool_result: "Edge Communications | ..." > ] }
+]
+```
+
+Claude uses this full history to understand context and write a coherent final answer. The loop continues until `stop_reason != "tool_use"`.
 
 ---
 
 ### Step 7 — Extract and return Claude's final answer
+
+Once Claude has all the data it needs, it responds with `stop_reason = "end_turn"` and a final text block:
+
+```json
+{
+  "stop_reason": "end_turn",
+  "content": [
+    {
+      "type": "text",
+      "text": "Here are your 10 Salesforce Accounts:\n\n| # | Name | ..."
+    }
+  ]
+}
+```
 
 ```python
 final_text = next(
@@ -225,7 +289,30 @@ final_text = next(
 return {"reply": final_text}
 ```
 
-The final text block from Claude's response is extracted and returned as JSON to the browser. The browser's `sendMessage()` function receives it and calls `addMessage("bot", data.reply)` to display it.
+The text is returned to the browser as `{ "reply": "..." }`. The browser's `sendMessage()` receives it and renders it:
+
+```javascript
+const data = await res.json();   // { "reply": "Here are your 10 accounts..." }
+removeTyping();
+addMessage("bot", data.reply);   // replaces "Thinking..." with the answer
+```
+
+#### Why `to_dict()` is needed
+
+The MCP SDK returns tool content blocks as Pydantic models. The Anthropic SDK expects plain dicts. `to_dict()` bridges this gap:
+
+```python
+def to_dict(obj):
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):   # Pydantic v2
+        return obj.model_dump()
+    if hasattr(obj, "dict"):         # Pydantic v1
+        return obj.dict()
+    return json.loads(json.dumps(obj, default=str))  # fallback
+```
+
+Without this, passing Pydantic objects directly to the Anthropic SDK would raise a serialization error when Claude is called in the next loop iteration.
 
 ---
 

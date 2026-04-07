@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Salesforce AI Chat</title>
+  <title>Salesforce AI Assistant</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -16,35 +16,258 @@
       height: 100vh;
     }
 
-    .chat-container {
+    /* ── Shared card ───────────────────────────────────────────── */
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .card-header {
+      background: #0070d2;
+      color: white;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .card-header .logo {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+
+    .card-header h1 {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .card-header p {
+      font-size: 13px;
+      opacity: 0.85;
+      margin-top: 4px;
+    }
+
+    .card-body {
+      padding: 32px;
+    }
+
+    /* ── Screen visibility ─────────────────────────────────────── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ── Loading spinner ───────────────────────────────────────── */
+    #screen-loading {
+      text-align: center;
+      padding: 48px 32px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #e5e7eb;
+      border-top-color: #0070d2;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Salesforce login ──────────────────────────────────────── */
+    .login-desc {
+      color: #6b7280;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 28px;
+      text-align: center;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .btn:active { transform: scale(0.98); }
+
+    .btn-sf {
+      background: #0070d2;
+      color: white;
+    }
+
+    .btn-sf:hover { background: #005fb2; }
+
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #374151;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .btn-secondary:hover { background: #e5e7eb; }
+
+    .btn-danger {
+      background: #fee2e2;
+      color: #dc2626;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .btn-danger:hover { background: #fecaca; }
+
+    /* ── API key screen ────────────────────────────────────────── */
+    .step-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    .step .dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .step.done .dot  { background: #d1fae5; color: #059669; }
+    .step.done label { color: #059669; font-weight: 600; }
+    .step.active .dot { background: #0070d2; color: white; }
+    .step.active label { color: #0070d2; font-weight: 600; }
+    .step-divider { flex: 1; height: 1px; background: #e5e7eb; }
+
+    .field-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .field-hint {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-bottom: 12px;
+    }
+
+    .field-hint a { color: #0070d2; }
+
+    input[type="password"], input[type="text"] {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s;
+      font-family: monospace;
+    }
+
+    input:focus { border-color: #0070d2; }
+
+    .btn-save {
+      background: #0070d2;
+      color: white;
+      margin-top: 16px;
+    }
+
+    .btn-save:hover { background: #005fb2; }
+    .btn-save:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    .error-msg {
+      background: #fee2e2;
+      color: #dc2626;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+
+    .success-msg {
+      background: #d1fae5;
+      color: #059669;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+
+    /* ── Chat screen ───────────────────────────────────────────── */
+    .chat-wrapper {
       width: 100%;
       max-width: 720px;
       height: 90vh;
       background: #fff;
       border-radius: 16px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.1);
-      display: flex;
+      display: none;
       flex-direction: column;
       overflow: hidden;
     }
 
+    .chat-wrapper.active { display: flex; }
+
     .chat-header {
       background: #0070d2;
       color: white;
-      padding: 18px 24px;
-      font-size: 17px;
-      font-weight: 600;
+      padding: 16px 20px;
       display: flex;
       align-items: center;
       gap: 10px;
     }
 
-    .chat-header .dot {
+    .chat-header .status-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
       background: #4ade80;
+      flex-shrink: 0;
     }
+
+    .chat-header .title { flex: 1; font-size: 16px; font-weight: 600; }
+
+    .chat-header .user-info {
+      font-size: 12px;
+      opacity: 0.8;
+      margin-right: 8px;
+    }
+
+    .chat-header .logout-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: white;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+      width: auto;
+    }
+
+    .chat-header .logout-btn:hover { background: rgba(255,255,255,0.25); }
 
     .messages {
       flex: 1;
@@ -55,14 +278,9 @@
       gap: 16px;
     }
 
-    .message {
-      display: flex;
-      flex-direction: column;
-      max-width: 80%;
-    }
-
-    .message.user { align-self: flex-end; align-items: flex-end; }
-    .message.bot  { align-self: flex-start; align-items: flex-start; }
+    .message { display: flex; flex-direction: column; max-width: 80%; }
+    .message.user  { align-self: flex-end;  align-items: flex-end; }
+    .message.bot   { align-self: flex-start; align-items: flex-start; }
 
     .bubble {
       padding: 12px 16px;
@@ -84,18 +302,29 @@
       border-bottom-left-radius: 4px;
     }
 
-    .label {
-      font-size: 11px;
-      color: #9ca3af;
-      margin-bottom: 4px;
-      padding: 0 4px;
+    .label { font-size: 11px; color: #9ca3af; margin-bottom: 4px; padding: 0 4px; }
+
+    .typing .bubble { background: #f3f4f6; color: #6b7280; font-style: italic; }
+
+    .suggestions {
+      padding: 0 24px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
-    .typing .bubble {
-      background: #f3f4f6;
-      color: #6b7280;
-      font-style: italic;
+    .suggestion {
+      background: #eff6ff;
+      color: #0070d2;
+      border: 1px solid #bfdbfe;
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
     }
+
+    .suggestion:hover { background: #dbeafe; }
 
     .input-area {
       padding: 16px 20px;
@@ -119,7 +348,7 @@
 
     textarea:focus { border-color: #0070d2; }
 
-    button {
+    .send-btn {
       padding: 0 20px;
       background: #0070d2;
       color: white;
@@ -130,39 +359,82 @@
       cursor: pointer;
       transition: background 0.2s;
       height: 48px;
+      width: auto;
     }
 
-    button:hover   { background: #005fb2; }
-    button:disabled { background: #93c5fd; cursor: not-allowed; }
-
-    .suggestions {
-      padding: 0 24px 16px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .suggestion {
-      background: #eff6ff;
-      color: #0070d2;
-      border: 1px solid #bfdbfe;
-      border-radius: 20px;
-      padding: 6px 14px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .suggestion:hover { background: #dbeafe; }
+    .send-btn:hover    { background: #005fb2; }
+    .send-btn:disabled { background: #93c5fd; cursor: not-allowed; }
   </style>
 </head>
 <body>
 
-<div class="chat-container">
+<!-- ── Loading ─────────────────────────────────────────────────── -->
+<div id="screen-loading" class="screen active">
+  <div class="spinner"></div>
+  <p style="color:#6b7280;font-size:14px;">Loading...</p>
+</div>
+
+<!-- ── Salesforce Login ─────────────────────────────────────────── -->
+<div id="screen-sf-login" class="card screen">
+  <div class="card-header">
+    <div class="logo">☁️</div>
+    <h1>Salesforce AI Assistant</h1>
+    <p>Powered by Claude + MCP</p>
+  </div>
+  <div class="card-body">
+    <p class="login-desc">
+      Connect your Salesforce org to get started. You'll be redirected to
+      Salesforce to log in securely.
+    </p>
+    <a href="/auth/salesforce" class="btn btn-sf">Login with Salesforce</a>
+    <div id="sf-error" class="error-msg"></div>
+  </div>
+</div>
+
+<!-- ── Anthropic API Key ─────────────────────────────────────────── -->
+<div id="screen-api-key" class="card screen">
+  <div class="card-header">
+    <div class="logo">🤖</div>
+    <h1>Almost there</h1>
+    <p>One more step to start chatting</p>
+  </div>
+  <div class="card-body">
+
+    <div class="step-indicator">
+      <div class="step done">
+        <div class="dot">✓</div>
+        <label>Salesforce</label>
+      </div>
+      <div class="step-divider"></div>
+      <div class="step active">
+        <div class="dot">2</div>
+        <label>Anthropic Key</label>
+      </div>
+    </div>
+
+    <label class="field-label">Anthropic API Key</label>
+    <p class="field-hint">
+      Get your key from
+      <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+      → API Keys
+    </p>
+    <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." />
+
+    <div id="api-key-error"   class="error-msg"></div>
+    <div id="api-key-success" class="success-msg">Key saved! Starting chat...</div>
+
+    <button class="btn btn-save" id="save-key-btn" onclick="saveApiKey()">Save & Continue</button>
+    <button class="btn btn-danger" onclick="logout()">Disconnect Salesforce</button>
+  </div>
+</div>
+
+<!-- ── Chat ─────────────────────────────────────────────────────── -->
+<div id="screen-chat" class="chat-wrapper screen">
 
   <div class="chat-header">
-    <div class="dot"></div>
-    Salesforce AI Assistant
+    <div class="status-dot"></div>
+    <div class="title">Salesforce AI Assistant</div>
+    <button class="logout-btn" onclick="logout()">Disconnect</button>
   </div>
 
   <div class="messages" id="messages">
@@ -181,12 +453,92 @@
 
   <div class="input-area">
     <textarea id="input" placeholder="Ask about your Salesforce data..." onkeydown="handleKey(event)"></textarea>
-    <button id="sendBtn" onclick="sendMessage()">Send</button>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
   </div>
 
 </div>
 
 <script>
+  // ── State machine ───────────────────────────────────────────────
+  function showScreen(name) {
+    document.querySelectorAll(".screen").forEach(el => el.classList.remove("active"));
+    document.getElementById("screen-" + name).classList.add("active");
+  }
+
+  // ── On load: check auth status and show correct screen ──────────
+  async function init() {
+    // Show error from OAuth redirect if present
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get("error");
+
+    const res  = await fetch("/auth/status");
+    const data = await res.json();
+
+    if (!data.sf_authenticated) {
+      showScreen("sf-login");
+      if (oauthError) {
+        const el = document.getElementById("sf-error");
+        el.textContent = "Login failed: " + oauthError.replace(/_/g, " ");
+        el.style.display = "block";
+      }
+    } else if (!data.anthropic_configured) {
+      showScreen("api-key");
+    } else {
+      showScreen("chat");
+    }
+  }
+
+  // ── Save Anthropic API key ──────────────────────────────────────
+  async function saveApiKey() {
+    const key    = document.getElementById("api-key-input").value.trim();
+    const errEl  = document.getElementById("api-key-error");
+    const okEl   = document.getElementById("api-key-success");
+    const btn    = document.getElementById("save-key-btn");
+
+    errEl.style.display = "none";
+    okEl.style.display  = "none";
+
+    if (!key) {
+      errEl.textContent = "Please enter your API key.";
+      errEl.style.display = "block";
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+
+    const res  = await fetch("/set-api-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: key }),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      errEl.textContent   = data.error;
+      errEl.style.display = "block";
+      btn.disabled        = false;
+      btn.textContent     = "Save & Continue";
+    } else {
+      okEl.style.display = "block";
+      setTimeout(() => showScreen("chat"), 800);
+    }
+  }
+
+  // Allow Enter key to submit the API key form
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("api-key-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") saveApiKey();
+    });
+  });
+
+  // ── Logout ──────────────────────────────────────────────────────
+  async function logout() {
+    await fetch("/auth/logout", { method: "POST" });
+    window.location.href = "/";
+  }
+
+  // ── Chat functions ──────────────────────────────────────────────
   const messagesEl = document.getElementById("messages");
   const inputEl    = document.getElementById("input");
   const sendBtn    = document.getElementById("sendBtn");
@@ -207,12 +559,12 @@
     const wrapper = document.createElement("div");
     wrapper.className = `message ${role}`;
 
-    const label = document.createElement("div");
-    label.className = "label";
+    const label  = document.createElement("div");
+    label.className   = "label";
     label.textContent = role === "user" ? "You" : "Assistant";
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
+    const bubble  = document.createElement("div");
+    bubble.className   = "bubble";
     bubble.textContent = text;
 
     wrapper.appendChild(label);
@@ -227,12 +579,12 @@
     wrapper.className = "message bot typing";
     wrapper.id = "typing";
 
-    const label = document.createElement("div");
-    label.className = "label";
+    const label  = document.createElement("div");
+    label.className   = "label";
     label.textContent = "Assistant";
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
+    const bubble  = document.createElement("div");
+    bubble.className   = "bubble";
     bubble.textContent = "Thinking...";
 
     wrapper.appendChild(label);
@@ -250,17 +602,17 @@
     const text = inputEl.value.trim();
     if (!text) return;
 
-    inputEl.value = "";
-    sendBtn.disabled = true;
+    inputEl.value      = "";
+    sendBtn.disabled   = true;
 
     addMessage("user", text);
     addTyping();
 
     try {
-      const res = await fetch("/chat", {
-        method: "POST",
+      const res  = await fetch("/chat", {
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body:    JSON.stringify({ message: text }),
       });
       const data = await res.json();
       removeTyping();
@@ -273,6 +625,9 @@
     sendBtn.disabled = false;
     inputEl.focus();
   }
+
+  // ── Boot ────────────────────────────────────────────────────────
+  init();
 </script>
 
 </body>

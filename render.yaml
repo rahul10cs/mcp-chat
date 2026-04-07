@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: salesforce-chat
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false   # fill in Render dashboard
+      - key: MCP_SERVER_URL
+        sync: false   # paste your deployed MCP server URL here
+      - key: PORT
+        value: 3000
